@@ -1,0 +1,19 @@
+[package]
+name = "llm-fallback-router"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Multi-provider failover for LLM calls. Try Anthropic, fall back to OpenAI/Gemini/Bedrock on retryable errors. Per-attempt audit log. Zero runtime deps. BYO clients."
+authors = ["Mukunda Rao Katta <mukunda.vjcs6@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MukundaKatta/llm-fallback-router-rs"
+homepage = "https://github.com/MukundaKatta/llm-fallback-router-rs"
+documentation = "https://docs.rs/llm-fallback-router"
+readme = "README.md"
+keywords = ["llm", "anthropic", "openai", "failover", "resilience"]
+categories = ["api-bindings"]
+exclude = [".github/*", "target/*"]
+
+[dependencies]
+
+[dev-dependencies]
