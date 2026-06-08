@@ -20,6 +20,10 @@ enum FakeError {
     HttpStatus(u16),
     /// Used to verify class-name keyword fallback.
     ServiceUnavailable,
+    /// Retryable error whose `Display` output is longer than the 512-char
+    /// audit cap and contains multibyte chars, to exercise truncation on a
+    /// char boundary.
+    LongMessage,
 }
 
 impl std::fmt::Display for FakeError {
@@ -30,6 +34,9 @@ impl std::fmt::Display for FakeError {
             FakeError::AuthError => write!(f, "bad auth"),
             FakeError::HttpStatus(s) => write!(f, "http {s}"),
             FakeError::ServiceUnavailable => write!(f, "service unavailable"),
+            // 'é' is two bytes, so a char boundary lands mid-way through the
+            // 512-byte window; truncation must not split it.
+            FakeError::LongMessage => write!(f, "{}", "é".repeat(400)),
         }
     }
 }
@@ -40,8 +47,7 @@ impl RetryHint for FakeError {
     fn is_retryable(&self) -> bool {
         match self {
             FakeError::RateLimit => {
-                default_is_retryable_by_name("RateLimitError")
-                    || default_is_retryable_status(429)
+                default_is_retryable_by_name("RateLimitError") || default_is_retryable_status(429)
             }
             FakeError::Overloaded => default_is_retryable_by_name("OverloadedError"),
             FakeError::ServiceUnavailable => {
@@ -49,6 +55,7 @@ impl RetryHint for FakeError {
             }
             FakeError::HttpStatus(s) => default_is_retryable_status(*s),
             FakeError::AuthError => false,
+            FakeError::LongMessage => true,
         }
     }
 }
@@ -59,9 +66,7 @@ impl RetryHint for FakeError {
 fn first_provider_wins_returns_route_result() {
     let router = Router::<&str, String, FakeError>::new(vec![
         Provider::new("primary", |req: &&str| Ok(format!("hello {req}"))),
-        Provider::new("secondary", |_req: &&str| {
-            panic!("must not be called")
-        }),
+        Provider::new("secondary", |_req: &&str| panic!("must not be called")),
     ])
     .unwrap();
 
@@ -86,7 +91,10 @@ fn falls_through_on_retryable_error() {
     assert_eq!(out.tries, 2);
     assert!(!out.attempts[0].ok);
     assert_eq!(out.attempts[0].error_type.as_deref(), Some("FakeError"));
-    assert_eq!(out.attempts[0].error_message.as_deref(), Some("rate limited"));
+    assert_eq!(
+        out.attempts[0].error_message.as_deref(),
+        Some("rate limited")
+    );
     assert!(out.attempts[1].ok);
 }
 
@@ -196,8 +204,7 @@ fn default_is_retryable_dispatches_through_trait() {
 fn per_provider_predicate_overrides_global() {
     let router = Router::<(), &'static str, FakeError>::new(vec![
         // AuthError is normally non-retryable, but this provider says "always retry"
-        Provider::new("a", |_| Err(FakeError::AuthError))
-            .with_retry_predicate(|_e| true),
+        Provider::new("a", |_| Err(FakeError::AuthError)).with_retry_predicate(|_e| true),
         Provider::new("b", |_| Ok("second")),
     ])
     .unwrap();
@@ -263,10 +270,8 @@ fn empty_provider_list_is_rejected() {
 
 #[test]
 fn providers_accessor_returns_borrowed_slice() {
-    let router = Router::<(), &'static str, FakeError>::new(vec![Provider::new("a", |_| {
-        Ok("x")
-    })])
-    .unwrap();
+    let router =
+        Router::<(), &'static str, FakeError>::new(vec![Provider::new("a", |_| Ok("x"))]).unwrap();
     assert_eq!(router.providers().len(), 1);
     assert_eq!(router.providers()[0].name, "a");
 }
@@ -296,10 +301,9 @@ fn router_without_retry_hint_uses_explicit_predicate() {
         Provider::new("a", |_| Err("rate-limit-x".to_string())),
         Provider::new("b", |_| Ok("won")),
     ];
-    let router = Router::with_providers_and_predicate(providers, |e: &String| {
-        e.contains("rate-limit")
-    })
-    .unwrap();
+    let router =
+        Router::with_providers_and_predicate(providers, |e: &String| e.contains("rate-limit"))
+            .unwrap();
 
     let out = router.complete(&()).unwrap();
     assert_eq!(out.provider, "b");
@@ -364,4 +368,32 @@ fn route_error_display_and_error_impls() {
     // confirms std::error::Error is implemented
     fn _take_error<E: std::error::Error>(_: &E) {}
     _take_error(&nr);
+}
+
+// ---- error-message truncation ----------------------------------------------
+
+#[test]
+fn long_error_message_is_truncated_on_char_boundary() {
+    let router = Router::<(), &'static str, FakeError>::new(vec![
+        Provider::new("a", |_| Err(FakeError::LongMessage)),
+        Provider::new("b", |_| Ok("ok")),
+    ])
+    .unwrap();
+
+    let out = router.complete(&()).unwrap();
+    let msg = out.attempts[0]
+        .error_message
+        .as_deref()
+        .expect("failed attempt records a message");
+
+    // The raw Display output is 800 bytes; it must be capped near 512 and may
+    // overshoot by at most one char (2 bytes here) to stay on a boundary.
+    assert!(
+        (512..=513).contains(&msg.len()),
+        "expected truncated length in 512..=513, got {}",
+        msg.len()
+    );
+    // Truncating mid-codepoint would have panicked already, but assert the
+    // content is well-formed and untouched up to the cut.
+    assert!(msg.chars().all(|c| c == 'é'));
 }

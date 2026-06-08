@@ -80,13 +80,7 @@ impl<E: fmt::Display> fmt::Display for RouteError<E> {
             RouteError::AllProvidersFailed(attempts) => {
                 let names: Vec<String> = attempts
                     .iter()
-                    .map(|a| {
-                        format!(
-                            "{}({})",
-                            a.provider,
-                            a.error_type.as_deref().unwrap_or("?")
-                        )
-                    })
+                    .map(|a| format!("{}({})", a.provider, a.error_type.as_deref().unwrap_or("?")))
                     .collect();
                 write!(f, "all providers failed: {}", names.join(", "))
             }
@@ -115,8 +109,9 @@ where
     /// [`default_is_retryable`] as the global predicate.
     ///
     /// Returns `Err` with the original vec if `providers` is empty.
-    pub fn new(providers: Vec<Provider<Req, Resp, E>>) -> Result<Self, Vec<Provider<Req, Resp, E>>>
-    {
+    pub fn new(
+        providers: Vec<Provider<Req, Resp, E>>,
+    ) -> Result<Self, Vec<Provider<Req, Resp, E>>> {
         if providers.is_empty() {
             return Err(providers);
         }

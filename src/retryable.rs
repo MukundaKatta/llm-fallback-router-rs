@@ -21,10 +21,7 @@ pub trait RetryHint {
 ///
 /// Matches the Python sibling: 408, 409, 425, 429, 500, 502, 503, 504, 529.
 pub fn default_is_retryable_status(status: u16) -> bool {
-    matches!(
-        status,
-        408 | 409 | 425 | 429 | 500 | 502 | 503 | 504 | 529
-    )
+    matches!(status, 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504 | 529)
 }
 
 /// Class-name keyword check used by the default retryable predicate.
